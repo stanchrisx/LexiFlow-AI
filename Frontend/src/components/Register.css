@@ -1,0 +1,89 @@
+/* Import base styles from Login.css */
+@import './Login.css';
+
+.register-card {
+  max-width: 450px;
+  margin-bottom: 2rem;
+}
+
+.password-strength {
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.password-strength-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--border-primary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.password-strength-fill {
+  height: 100%;
+  transition: all 0.3s ease;
+  border-radius: 2px;
+}
+
+.password-strength-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  min-width: 60px;
+}
+
+.password-match {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--success);
+  font-size: 0.75rem;
+  font-weight: 500;
+  margin-top: 0.5rem;
+}
+
+/* Enhanced form spacing for registration */
+.register-card .form {
+  gap: 1.75rem;
+}
+
+.register-card .form-group {
+  gap: 0.75rem;
+}
+
+/* Responsive adjustments for registration */
+@media (max-width: 768px) {
+  .register-card {
+    max-width: 100%;
+    margin-bottom: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .register-card {
+    padding: 1.25rem;
+    margin-bottom: 0.5rem;
+  }
+  
+  .register-card .form {
+    gap: 1.5rem;
+  }
+}
+
+/* Animation for password strength indicator */
+@keyframes strengthIndicator {
+  0% {
+    opacity: 0;
+    transform: scaleX(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+.password-strength-fill {
+  transform-origin: left;
+  animation: strengthIndicator 0.3s ease-out;
+}
