@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Eye, EyeOff, FileText, ArrowRight, CheckCircle } from 'lucide-react';
+import { authAPI } from '../services/api';
 import './Register.css';
 
 const Register = () => {
@@ -98,16 +99,25 @@ const Register = () => {
 
     setIsLoading(true);
     
-    // Simulate API call
-    setTimeout(() => {
-      setIsLoading(false);
-      // For demo purposes, redirect to login after successful registration
+    try {
+      await authAPI.register({
+        fullName: formData.fullName,
+        email: formData.email,
+        password: formData.password,
+      });
       navigate('/login', { 
         state: { 
           message: 'Registration successful! Please sign in with your credentials.' 
         } 
       });
-    }, 1500);
+    } catch (error) {
+      console.error('Registration failed:', error);
+      setErrors({
+        general: error.detail || 'Registration failed. Please try again.'
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const containerVariants = {
@@ -323,6 +333,17 @@ const Register = () => {
                 </motion.span>
               )}
             </div>
+
+            {errors.general && (
+              <motion.div
+                className="error-message"
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                style={{ marginBottom: '1rem', textAlign: 'center' }}
+              >
+                {errors.general}
+              </motion.div>
+            )}
 
             <motion.button
               type="submit"

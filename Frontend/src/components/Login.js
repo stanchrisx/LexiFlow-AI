@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Eye, EyeOff, FileText, ArrowRight } from 'lucide-react';
+import { authAPI } from '../services/api';
 import './Login.css';
 
 const Login = () => {
@@ -55,12 +56,20 @@ const Login = () => {
 
     setIsLoading(true);
     
-    // Simulate API call
-    setTimeout(() => {
-      setIsLoading(false);
-      // For demo purposes, always redirect to dashboard
+    try {
+      await authAPI.login({
+        email: formData.email,
+        password: formData.password,
+      });
       navigate('/dashboard');
-    }, 1500);
+    } catch (error) {
+      console.error('Login failed:', error);
+      setErrors({
+        general: error.detail || 'Login failed. Please check your credentials and try again.'
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const containerVariants = {
@@ -185,6 +194,17 @@ const Login = () => {
                 Forgot Password?
               </Link>
             </div>
+
+            {errors.general && (
+              <motion.div
+                className="error-message"
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                style={{ marginBottom: '1rem', textAlign: 'center' }}
+              >
+                {errors.general}
+              </motion.div>
+            )}
 
             <motion.button
               type="submit"

@@ -14,8 +14,6 @@ import {
   Pause, 
   SkipBack, 
   SkipForward,
-  Eye,
-  EyeOff,
   Type,
   Minus,
   Plus,
@@ -23,9 +21,11 @@ import {
   Loader2,
   ChevronLeft,
   ChevronRight,
-  MessageCircle
+  MessageCircle,
+  X
 } from 'lucide-react';
 import PDFChatbot from './PDFChatbot';
+import { pdfAPI } from '../services/api';
 import './Reader.css';
 
 const Reader = () => {
@@ -51,38 +51,189 @@ const Reader = () => {
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
   const [activeLeftTab, setActiveLeftTab] = useState('search');
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
+  const [showSearchPopup, setShowSearchPopup] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
-  const [dyslexiaMode, setDyslexiaMode] = useState(false);
-  const [overlayMode, setOverlayMode] = useState(false);
+  const [backgroundTheme, setBackgroundTheme] = useState('default'); // default, beige, sepia, dark-blue, mint
+  const [fontFamily, setFontFamily] = useState('default'); // default, dyslexic, serif, mono
   const [focusMode, setFocusMode] = useState(false);
   const [fontSize, setFontSize] = useState(16);
   const [theme, setTheme] = useState('light');
+  const [showThemeMenu, setShowThemeMenu] = useState(false);
+  const [showFontMenu, setShowFontMenu] = useState(false);
   const [chatbotOpen, setChatbotOpen] = useState(false);
+  const [documentData, setDocumentData] = useState(null);
+  const [loadingDocument, setLoadingDocument] = useState(true);
 
-  // Mock PDF content data
-  const mockPdfContent = useMemo(() => {
+  // Fetch document data from backend
+  useEffect(() => {
+    const fetchDocument = async () => {
+      try {
+        setLoadingDocument(true);
+        const docId = id;
+        const data = await pdfAPI.getDocument(docId);
+        setDocumentData(data);
+      } catch (error) {
+        console.error('Failed to load document:', error);
+        // If fails, will show mock data
+      } finally {
+        setLoadingDocument(false);
+      }
+    };
+
+    if (id) {
+      fetchDocument();
+    } else {
+      setLoadingDocument(false);
+    }
+  }, [id]);
+
+  // Get PDF content from real data or fallback to mock
+  const pdfContent = useMemo(() => {
+    if (documentData && documentData.pages) {
+      return documentData.pages;
+    }
+    
+    // Fallback to mock data
     const pages = [];
     for (let i = 1; i <= pdfData.pages; i++) {
-      const hasOcr = ocrComplete || Math.random() > 0.3; // 70% of pages have OCR
-      const isImageOnly = !hasOcr && Math.random() > 0.5; // Some pages are image-only
-      
+      const hasOcr = ocrComplete || Math.random() > 0.3;
       pages.push({
-        pageNumber: i,
-        hasOcr,
-        isImageOnly,
-        originalContent: `Original page ${i} content - This would be the raw PDF page rendering.`,
-        reflowContent: hasOcr ? [
-          `This is paragraph 1 from page ${i}. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`,
-          `This is paragraph 2 from page ${i}. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.`,
-          `This is paragraph 3 from page ${i}. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.`
-        ] : null,
-        searchMatches: [],
-        bookmarks: [],
-        annotations: []
+        page_number: i,
+        content_blocks: hasOcr ? [
+          {
+            type: 'paragraph',
+            content: `This is paragraph 1 from page ${i}. Lorem ipsum dolor sit amet, consectetur adipiscing elit.`,
+            page_number: i,
+            position: { x: 50, y: 100, width: 500, height: 50 },
+            order: 0,
+            is_editable: true
+          },
+          {
+            type: 'paragraph',
+            content: `This is paragraph 2 from page ${i}. Ut enim ad minim veniam, quis nostrud exercitation.`,
+            page_number: i,
+            position: { x: 50, y: 160, width: 500, height: 50 },
+            order: 1,
+            is_editable: true
+          }
+        ] : [],
+        original_image: null,
+        has_ocr: hasOcr,
+        ocr_confidence: hasOcr ? 0.95 : null
       });
     }
     return pages;
-  }, [pdfData.pages, ocrComplete]);
+  }, [documentData, pdfData.pages, ocrComplete]);
+
+  // Search functionality
+  const performSearch = useCallback(() => {
+    if (!searchQuery.trim() || !documentData?.pages) {
+      setSearchResults([]);
+      return;
+    }
+
+    const results = [];
+    const query = searchQuery.toLowerCase();
+
+    documentData.pages.forEach(page => {
+      page.content_blocks?.forEach(block => {
+        if (block.type === 'paragraph' || block.type === 'text' || block.type === 'heading') {
+          const content = block.content.toLowerCase();
+          let index = content.indexOf(query);
+          
+          while (index !== -1) {
+            results.push({
+              pageNumber: page.page_number,
+              blockOrder: block.order,
+              matchIndex: index,
+              matchLength: searchQuery.length,
+              fullContent: block.content,
+              context: block.content.substring(Math.max(0, index - 40), Math.min(block.content.length, index + query.length + 40))
+            });
+            index = content.indexOf(query, index + 1);
+          }
+        }
+      });
+    });
+
+    setSearchResults(results);
+    setCurrentSearchIndex(0);
+    
+    // Jump to first result
+    if (results.length > 0) {
+      setCurrentPage(results[0].pageNumber);
+    }
+  }, [searchQuery, documentData]);
+
+  // Helper function to highlight search text in content
+  const highlightSearchText = useCallback((text, blockOrder, pageNumber) => {
+    if (!searchQuery || searchResults.length === 0) {
+      return text;
+    }
+
+    // Find if this block has matches on the current page
+    const blockMatches = searchResults.filter(
+      result => result.pageNumber === pageNumber && result.blockOrder === blockOrder
+    );
+
+    if (blockMatches.length === 0) {
+      return text;
+    }
+
+    // Sort matches by index in reverse to avoid offset issues
+    const sortedMatches = [...blockMatches].sort((a, b) => b.matchIndex - a.matchIndex);
+    
+    let highlightedText = text;
+    sortedMatches.forEach((match, idx) => {
+      const isCurrentMatch = searchResults[currentSearchIndex]?.pageNumber === pageNumber && 
+                             searchResults[currentSearchIndex]?.blockOrder === blockOrder &&
+                             searchResults[currentSearchIndex]?.matchIndex === match.matchIndex;
+      
+      const before = highlightedText.substring(0, match.matchIndex);
+      const matchText = highlightedText.substring(match.matchIndex, match.matchIndex + match.matchLength);
+      const after = highlightedText.substring(match.matchIndex + match.matchLength);
+      
+      const highlightClass = isCurrentMatch ? 'highlight-current' : 'highlight-match';
+      highlightedText = `${before}<mark class="${highlightClass}">${matchText}</mark>${after}`;
+    });
+
+    return highlightedText;
+  }, [searchQuery, searchResults, currentSearchIndex]);
+
+  // Navigate search results
+  const goToNextResult = useCallback(() => {
+    if (searchResults.length > 0) {
+      const nextIndex = (currentSearchIndex + 1) % searchResults.length;
+      setCurrentSearchIndex(nextIndex);
+      setCurrentPage(searchResults[nextIndex].pageNumber);
+    }
+  }, [searchResults, currentSearchIndex]);
+
+  const goToPrevResult = useCallback(() => {
+    if (searchResults.length > 0) {
+      const prevIndex = currentSearchIndex === 0 ? searchResults.length - 1 : currentSearchIndex - 1;
+      setCurrentSearchIndex(prevIndex);
+      setCurrentPage(searchResults[prevIndex].pageNumber);
+    }
+  }, [searchResults, currentSearchIndex]);
+
+  // Auto-scroll to current highlight
+  useEffect(() => {
+    if (searchResults.length > 0 && currentSearchIndex >= 0) {
+      setTimeout(() => {
+        const currentHighlight = document.querySelector('.highlight-current');
+        if (currentHighlight) {
+          currentHighlight.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center',
+            inline: 'nearest'
+          });
+        }
+      }, 300); // Small delay to allow page change animation
+    }
+  }, [currentSearchIndex, searchResults, currentPage]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -104,15 +255,15 @@ const Reader = () => {
           break;
         case '/':
           e.preventDefault();
-          setLeftSidebarOpen(true);
-          setActiveLeftTab('search');
+          setShowSearchPopup(true);
           setTimeout(() => {
-            const searchInput = document.querySelector('.search-input');
+            const searchInput = document.querySelector('.search-popup-input');
             if (searchInput) searchInput.focus();
           }, 100);
           break;
         case 'Escape':
           e.preventDefault();
+          setShowSearchPopup(false);
           setLeftSidebarOpen(false);
           setRightDrawerOpen(false);
           break;
@@ -149,9 +300,41 @@ const Reader = () => {
     setFontSize(prev => Math.max(12, prev - 2));
   }, []);
 
-  const currentPageData = mockPdfContent[currentPage - 1];
-  const canShowReflow = viewMode === 'reflow' && currentPageData?.hasOcr;
-  const needsOcr = viewMode === 'reflow' && !currentPageData?.hasOcr;
+  const currentPageData = pdfContent[currentPage - 1];
+  const hasContent = currentPageData?.content_blocks && currentPageData.content_blocks.length > 0;
+  const canShowReflow = viewMode === 'reflow' && hasContent;
+  const needsOcr = viewMode === 'reflow' && !hasContent;
+
+  // TTS Functionality
+  const handleTTSToggle = useCallback(() => {
+    if (ttsPlaying) {
+      // Stop speech
+      window.speechSynthesis.cancel();
+      setTtsPlaying(false);
+    } else {
+      // Start speech
+      if (currentPageData?.content_blocks) {
+        const textBlocks = currentPageData.content_blocks
+          .filter(block => block.type === 'paragraph' || block.type === 'text' || block.type === 'heading')
+          .sort((a, b) => a.order - b.order);
+        
+        const fullText = textBlocks.map(block => block.content).join('. ');
+        
+        const utterance = new SpeechSynthesisUtterance(fullText);
+        utterance.rate = 0.9;
+        utterance.pitch = 1;
+        utterance.volume = 1;
+        
+        utterance.onend = () => {
+          setTtsPlaying(false);
+        };
+        
+        window.speechSynthesis.speak(utterance);
+        setTtsPlaying(true);
+      }
+    }
+  }, [ttsPlaying, currentPageData]);
+
 
   return (
     <div className={`reader ${theme} ${focusMode ? 'focus-mode' : ''}`}>
@@ -232,14 +415,45 @@ const Reader = () => {
         {/* Quick Settings Strip */}
         <div className="quick-settings">
           <div className="settings-group">
-            <button 
-              className={`setting-button ${dyslexiaMode ? 'active' : ''}`}
-              onClick={() => setDyslexiaMode(!dyslexiaMode)}
-              title="Dyslexia-friendly font"
-            >
-              <Type size={14} />
-              Dyslexia
-            </button>
+            {/* Font Family Selector */}
+            <div className="setting-dropdown">
+              <button 
+                className={`setting-button ${fontFamily !== 'default' ? 'active' : ''}`}
+                onClick={() => setShowFontMenu(!showFontMenu)}
+                title="Font family"
+              >
+                <Type size={14} />
+                Font
+              </button>
+              {showFontMenu && (
+                <div className="dropdown-menu">
+                  <button 
+                    className={fontFamily === 'default' ? 'active' : ''}
+                    onClick={() => { setFontFamily('default'); setShowFontMenu(false); }}
+                  >
+                    Default
+                  </button>
+                  <button 
+                    className={fontFamily === 'dyslexic' ? 'active' : ''}
+                    onClick={() => { setFontFamily('dyslexic'); setShowFontMenu(false); }}
+                  >
+                    OpenDyslexic
+                  </button>
+                  <button 
+                    className={fontFamily === 'serif' ? 'active' : ''}
+                    onClick={() => { setFontFamily('serif'); setShowFontMenu(false); }}
+                  >
+                    Serif
+                  </button>
+                  <button 
+                    className={fontFamily === 'mono' ? 'active' : ''}
+                    onClick={() => { setFontFamily('mono'); setShowFontMenu(false); }}
+                  >
+                    Monospace
+                  </button>
+                </div>
+              )}
+            </div>
             
             <div className="font-size-controls">
               <button className="setting-button" onClick={handleFontSizeDecrease} title="Decrease font size">
@@ -252,14 +466,56 @@ const Reader = () => {
               </button>
             </div>
 
-            <button 
-              className={`setting-button ${overlayMode ? 'active' : ''}`}
-              onClick={() => setOverlayMode(!overlayMode)}
-              title="Toggle overlay mode"
-            >
-              {overlayMode ? <EyeOff size={14} /> : <Eye size={14} />}
-              Overlay
-            </button>
+            {/* Background Theme Selector */}
+            <div className="setting-dropdown">
+              <button 
+                className={`setting-button ${backgroundTheme !== 'default' ? 'active' : ''}`}
+                onClick={() => setShowThemeMenu(!showThemeMenu)}
+                title="Background theme"
+              >
+                {backgroundTheme === 'default' ? '🎨' : '🌈'}
+                Theme
+              </button>
+              {showThemeMenu && (
+                <div className="dropdown-menu">
+                  <button 
+                    className={backgroundTheme === 'default' ? 'active' : ''}
+                    onClick={() => { setBackgroundTheme('default'); setShowThemeMenu(false); }}
+                  >
+                    <span className="theme-dot" style={{background: '#ffffff'}}></span>
+                    Default
+                  </button>
+                  <button 
+                    className={backgroundTheme === 'beige' ? 'active' : ''}
+                    onClick={() => { setBackgroundTheme('beige'); setShowThemeMenu(false); }}
+                  >
+                    <span className="theme-dot" style={{background: '#fdfbf7'}}></span>
+                    Beige
+                  </button>
+                  <button 
+                    className={backgroundTheme === 'sepia' ? 'active' : ''}
+                    onClick={() => { setBackgroundTheme('sepia'); setShowThemeMenu(false); }}
+                  >
+                    <span className="theme-dot" style={{background: '#f4ecd8'}}></span>
+                    Sepia
+                  </button>
+                  <button 
+                    className={backgroundTheme === 'mint' ? 'active' : ''}
+                    onClick={() => { setBackgroundTheme('mint'); setShowThemeMenu(false); }}
+                  >
+                    <span className="theme-dot" style={{background: '#e8f5f1'}}></span>
+                    Mint
+                  </button>
+                  <button 
+                    className={backgroundTheme === 'dark-blue' ? 'active' : ''}
+                    onClick={() => { setBackgroundTheme('dark-blue'); setShowThemeMenu(false); }}
+                  >
+                    <span className="theme-dot" style={{background: '#1e2a3a'}}></span>
+                    Night Blue
+                  </button>
+                </div>
+              )}
+            </div>
 
             <button 
               className={`setting-button ${focusMode ? 'active' : ''}`}
@@ -354,7 +610,16 @@ const Reader = () => {
           </AnimatePresence>
 
           {/* Content Area */}
-          <main className="content-area">
+          <main className={`content-area theme-${backgroundTheme} font-${fontFamily}`}>
+            {/* Focus Mode - Line highlighting overlay */}
+            {focusMode && (
+              <div className="focus-overlay">
+                <div className="focus-dimmer focus-top"></div>
+                <div className="focus-highlight"></div>
+                <div className="focus-dimmer focus-bottom"></div>
+              </div>
+            )}
+            
             <div className="content-wrapper" style={{ fontSize: `${fontSize}px` }}>
               {needsOcr && (
                 <motion.div 
@@ -376,30 +641,81 @@ const Reader = () => {
                 </motion.div>
               )}
 
-              <div className={`page-content ${viewMode} ${dyslexiaMode ? 'dyslexia' : ''}`}>
-                {viewMode === 'original' ? (
+              <div className={`page-content ${viewMode}`}>
+                {loadingDocument ? (
+                  <div className="loading-content">
+                    <Loader2 size={48} className="spinner" />
+                    <p>Loading document...</p>
+                  </div>
+                ) : viewMode === 'original' ? (
                   <div className="original-page" style={{ transform: `scale(${zoomLevel / 100})` }}>
-                    <div className="page-image">
-                      <div className="page-placeholder">
-                        <FileText size={48} />
-                        <p>Original Page {currentPage}</p>
-                        <p className="page-description">{currentPageData?.originalContent}</p>
+                    {currentPageData?.original_image ? (
+                      <img 
+                        src={currentPageData.original_image} 
+                        alt={`Page ${currentPage}`}
+                        className="page-image-render"
+                      />
+                    ) : (
+                      <div className="page-image">
+                        <div className="page-placeholder">
+                          <FileText size={48} />
+                          <p>Original Page {currentPage}</p>
+                          <p className="page-description">PDF page rendering</p>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 ) : canShowReflow ? (
                   <div className="reflow-content">
-                    {currentPageData.reflowContent.map((paragraph, index) => (
-                      <motion.p 
-                        key={index}
+                    {currentPageData.content_blocks && currentPageData.content_blocks
+                      .sort((a, b) => a.order - b.order)
+                      .map((block, index) => {
+                        // Render text blocks (paragraph, text, heading)
+                        if (block.type === 'paragraph' || block.type === 'text' || block.type === 'heading') {
+                          return (
+                    <motion.div
+                      key={`${block.page_number}-${block.order}`}
+                      className={`content-block ${block.type}`}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.3, delay: index * 0.05 }}
+                    >
+                      <p 
                         className="reflow-paragraph"
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.3, delay: index * 0.1 }}
-                      >
-                        {paragraph}
-                      </motion.p>
-                    ))}
+                        dangerouslySetInnerHTML={{
+                          __html: highlightSearchText(block.content, block.order, currentPage)
+                        }}
+                      />
+                      {block.metadata?.ocr && (
+                        <span className="ocr-badge" title={`OCR Confidence: ${(block.metadata.confidence || 0).toFixed(0)}%`}>
+                          OCR
+                        </span>
+                      )}
+                    </motion.div>
+                          );
+                        }
+                        
+                        // Render image blocks
+                        if (block.type === 'image') {
+                          return (
+                            <motion.div
+                              key={`${block.page_number}-${block.order}`}
+                              className="content-block image"
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              transition={{ duration: 0.3, delay: index * 0.05 }}
+                            >
+                              <img 
+                                src={block.content} 
+                                alt={`Page ${block.page_number} content`}
+                                className="content-image"
+                              />
+                            </motion.div>
+                          );
+                        }
+                        
+                        return null;
+                      })}
                   </div>
                 ) : null}
               </div>
@@ -445,8 +761,8 @@ const Reader = () => {
             </button>
             <button 
               className="tts-button primary" 
-              onClick={() => setTtsPlaying(!ttsPlaying)}
-              title={ttsPlaying ? 'Pause' : 'Play'}
+              onClick={handleTTSToggle}
+              title={ttsPlaying ? 'Stop Reading' : 'Read Aloud'}
             >
               {ttsPlaying ? <Pause size={16} /> : <Play size={16} />}
             </button>
@@ -494,6 +810,131 @@ const Reader = () => {
           isOpen={chatbotOpen}
           onToggle={() => setChatbotOpen(!chatbotOpen)}
         />
+
+        {/* Search Popup */}
+        {showSearchPopup && (
+          <motion.div 
+            className="search-popup-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowSearchPopup(false)}
+          >
+            <motion.div 
+              className="search-popup"
+              initial={{ scale: 0.9, opacity: 0, y: -20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: -20 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="search-popup-header">
+                <Search size={20} />
+                <h3>Search in Document</h3>
+                <button 
+                  className="search-popup-close"
+                  onClick={() => setShowSearchPopup(false)}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="search-popup-body">
+                <div className="search-input-wrapper">
+                  <Search size={16} className="search-icon-input" />
+                  <input
+                    type="text"
+                    className="search-popup-input"
+                    placeholder="Type to search..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        performSearch();
+                      }
+                    }}
+                  />
+                  {searchQuery && (
+                    <button 
+                      className="clear-search-btn"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setSearchResults([]);
+                      }}
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
+
+                <button 
+                  className="search-btn"
+                  onClick={performSearch}
+                  disabled={!searchQuery.trim()}
+                >
+                  Search
+                </button>
+              </div>
+
+              {searchResults.length > 0 && (
+                <div className="search-results-section">
+                  <div className="search-results-header">
+                    <span className="results-count">
+                      {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} found
+                    </span>
+                    <div className="search-navigation">
+                      <span className="current-result">
+                        {currentSearchIndex + 1} / {searchResults.length}
+                      </span>
+                      <button 
+                        className="nav-btn"
+                        onClick={goToPrevResult}
+                        title="Previous result"
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <button 
+                        className="nav-btn"
+                        onClick={goToNextResult}
+                        title="Next result"
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="search-results-list">
+                    {searchResults.map((result, index) => (
+                      <div 
+                        key={index}
+                        className={`search-result-item ${index === currentSearchIndex ? 'active' : ''}`}
+                        onClick={() => {
+                          setCurrentSearchIndex(index);
+                          setCurrentPage(result.pageNumber);
+                        }}
+                      >
+                        <div className="result-page-number">Page {result.pageNumber}</div>
+                        <div className="result-context">
+                          ...{result.context}...
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {searchQuery && searchResults.length === 0 && (
+                <div className="no-results">
+                  <Search size={32} />
+                  <p>No results found for "{searchQuery}"</p>
+                </div>
+              )}
+
+              <div className="search-popup-footer">
+                <span className="shortcut-hint">Press <kbd>/</kbd> to search • <kbd>Esc</kbd> to close</span>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </div>
     </div>
   );
